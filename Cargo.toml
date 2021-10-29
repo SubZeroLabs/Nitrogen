@@ -1,0 +1,12 @@
+[package]
+name = "shovel"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+minecraft_data_types = { version = "0.1.0", git = "https://github.com/Minecraft-rs/MinecraftTypes", branch = "master" }
+mc_packet_protocol = { version = "0.1.0", git = "https://github.com/Minecraft-rs/PacketProtocol", branch = "master" }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1.0.44"
