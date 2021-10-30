@@ -9,4 +9,13 @@ edition = "2021"
 minecraft_data_types = { version = "0.1.0", git = "https://github.com/Minecraft-rs/MinecraftTypes", branch = "master" }
 mc_packet_protocol = { version = "0.1.0", git = "https://github.com/Minecraft-rs/PacketProtocol", branch = "master" }
 tokio = { version = "1", features = ["full"] }
-anyhow = "1.0.44"
+anyhow = "1.0"
+toml = "0.5"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
+log = "0.4"
+fern = "0.6"
+chrono = "0.4"
+bytes = "1.1"
+async-trait = "0.1.51"
