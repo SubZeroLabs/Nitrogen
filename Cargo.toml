@@ -8,7 +8,6 @@ edition = "2021"
 [dependencies]
 minecraft_data_types = { version = "0.1.0", git = "https://github.com/Minecraft-rs/MinecraftTypes", branch = "master" }
 mc_packet_protocol = { version = "0.1.0", git = "https://github.com/Minecraft-rs/PacketProtocol", branch = "master" }
-tokio = { version = "1", features = ["full"] }
 anyhow = "1.0"
 toml = "0.5"
 serde = "1.0"
@@ -19,3 +18,14 @@ fern = "0.6"
 chrono = "0.4"
 bytes = "1.1"
 async-trait = "0.1.51"
+
+[dependencies.tokio]
+version = "1"
+features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "io-util",
+    "sync",
+    "time",
+]

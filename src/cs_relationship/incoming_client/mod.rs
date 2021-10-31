@@ -15,7 +15,7 @@ use std::io::Cursor;
 use tokio::time::{timeout_at, Instant, Duration};
 
 pub mod handshaking;
-// pub mod login;
+pub mod login;
 pub mod status;
 
 pub(crate) enum ClientState {
@@ -169,6 +169,9 @@ pub async fn new_client(socket: TcpStream, address: SocketAddr, config: Arc<Mute
                             };
                             log::trace!(target: &client.address.to_string(), "Failed read with buffer: {:?}, {:?}", client.buffer.inner_buf(), len);
                             error!(target: &client.address.to_string(), "Error occurred reading buffer: {:?}", err);
+                            break;
+                        } else if let (0, 0) = client.buffer.len() {
+                            error!(target: &client.address.to_string(), "Found buffer EOF when not expected, ending.");
                             break;
                         }
                     }

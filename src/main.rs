@@ -3,10 +3,10 @@
 use anyhow::Context;
 use log::{error, info};
 use std::sync::Arc;
-use tokio::fs::File;
-use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
+use std::fs::File;
+use std::io::Read;
 
 mod cs_relationship;
 
@@ -49,13 +49,12 @@ fn setup_logger() -> anyhow::Result<()> {
 }
 
 async fn read_config() -> anyhow::Result<Config> {
-    let mut file = File::open("./Config.toml").await.context(format!(
+    let mut file = File::open("./Config.toml").context(format!(
         "Failed to open configuration file: {}/Config.toml",
         std::env::current_dir()?.to_str().unwrap_or("Unknown")
     ))?;
     let mut contents = vec![];
     file.read_to_end(&mut contents)
-        .await
         .context("Failed to read config to internal string.")?;
     toml::from_slice::<Config>(&contents).context("Failed to read configuration.")
 }

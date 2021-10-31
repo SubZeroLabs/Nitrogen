@@ -90,16 +90,16 @@ impl FakeServerStatusHandler {
 
 #[async_trait]
 impl mc_packet_protocol::registry::StatusServerBoundRegistryHandler for FakeServerStatusHandler {
-    async fn handle_default<T: Decodable>(
+    async fn handle_default<T: Decodable, H: LazyHandle<T> + Send>(
         &mut self,
-        handle: impl LazyHandle<T> + Send + 'async_trait,
+        handle: H,
     ) -> anyhow::Result<()> {
         handle.consume_bytes()
     }
 
-    async fn handle_status_request(
+    async fn handle_status_request<H: LazyHandle<StatusRequest> + Send>(
         &mut self,
-        handle: impl LazyHandle<StatusRequest> + Send + 'async_trait,
+        handle: H,
     ) -> anyhow::Result<()> {
         handle.consume_bytes()?;
         trace!(target: &self.client_address.to_string(), "Handling status request.");
@@ -131,9 +131,9 @@ impl mc_packet_protocol::registry::StatusServerBoundRegistryHandler for FakeServ
         Ok(())
     }
 
-    async fn handle_ping(
+    async fn handle_ping<H: LazyHandle<Ping> + Send>(
         &mut self,
-        handle: impl LazyHandle<Ping> + Send + 'async_trait,
+        handle: H,
     ) -> anyhow::Result<()> {
         let ping = handle.decode_type()?;
         trace!(target: &self.client_address.to_string(), "Handling ping! {:#?}", &ping);

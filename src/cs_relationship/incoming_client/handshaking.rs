@@ -8,6 +8,7 @@ use minecraft_data_types::Decodable;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use mc_packet_protocol::registry::LazyHandle;
 
 pub(crate) struct FakeServerHandshakingHandler {
     next_state: Box<Option<ClientState>>,
@@ -37,16 +38,16 @@ impl FakeServerHandshakingHandler {
 impl registry::HandshakingServerBoundRegistryHandler
     for FakeServerHandshakingHandler
 {
-    async fn handle_default<T: Decodable>(
+    async fn handle_default<T: Decodable, H: LazyHandle<T> + Send>(
         &mut self,
-        handle: impl registry::LazyHandle<T> + std::marker::Send + 'async_trait,
+        handle: H,
     ) -> anyhow::Result<()> {
         handle.consume_bytes()
     }
 
-    async fn handle_handshake(
+    async fn handle_handshake<H: LazyHandle<Handshake> + Send>(
         &mut self,
-        handle: impl registry::LazyHandle<Handshake> + Send + 'async_trait,
+        handle: H,
     ) -> anyhow::Result<()> {
         let handshake = handle.decode_type()?;
         log::trace!(target: &self.client_address.to_string(), "Received handshake {:#?}", handshake);
