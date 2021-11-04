@@ -2,6 +2,7 @@
 [network]
 bind = "127.0.0.1"
 port = 25565
+compression_threshold = 256
 
 [server_info]
 motd = "Some Random MOTD which is configurable."

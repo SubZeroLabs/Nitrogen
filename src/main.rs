@@ -1,14 +1,12 @@
-#![feature(in_band_lifetimes)]
-
 use anyhow::Context;
 use log::{error, info};
-use std::sync::Arc;
-use tokio::net::TcpListener;
-use tokio::sync::Mutex;
 use std::fs::File;
 use std::io::Read;
+use std::sync::Arc;
+use tokio::net::TcpListener;
 
-mod cs_relationship;
+pub(crate) mod mc_types;
+mod incoming_client;
 
 const CURRENT_PROTOCOL: (i32, &str) = (756, "1.17.1");
 
@@ -16,6 +14,7 @@ const CURRENT_PROTOCOL: (i32, &str) = (756, "1.17.1");
 pub struct Network {
     bind: String,
     port: u16,
+    compression_threshold: i32,
 }
 
 #[derive(serde_derive::Deserialize, std::fmt::Debug)]
@@ -41,7 +40,7 @@ fn setup_logger() -> anyhow::Result<()> {
                 message
             ))
         })
-        .level(log::LevelFilter::Trace)
+        .level(log::LevelFilter::Debug)
         .chain(std::io::stdout())
         .apply()
         .context("Failed to apply configuration to log dispatcher.")?;
@@ -73,18 +72,32 @@ async fn setup_proxy() -> anyhow::Result<()> {
         "Reading config from {}/Config.toml",
         std::env::current_dir()?.to_str().unwrap_or("Unknown")
     );
-    let config = Arc::new(Mutex::new(read_config().await?));
-    let local = config.lock().await;
-    let bind = format!("{}:{}", local.network.bind, local.network.port);
+    let config = Arc::new(read_config().await?);
+    info!("Starting server with configuration {:#?}", &config);
+    let bind = format!("{}:{}", config.network.bind, config.network.port);
     info!("Binding to tokio listener on {}", &bind);
     let listener = TcpListener::bind(&bind).await?;
     info!("Proxy Started: Listening on {}", &bind);
-    drop(local);
+    watch_incoming(listener, &config).await;
+    Ok(())
+}
+
+async fn watch_incoming(listener: TcpListener, config: &Arc<Config>) {
+    let config = Arc::clone(config);
     loop {
-        let (socket, address) = listener.accept().await?;
-        let config_client_copy = Arc::clone(&config);
-        tokio::spawn(async move {
-            cs_relationship::incoming_client::new_client(socket, address, config_client_copy).await;
-        });
+        if watch_for_client(&listener, Arc::clone(&config)).await.is_err() {
+            panic!("Something went wrong taking on a new client!");
+        }
     }
+}
+
+async fn watch_for_client(listener: &TcpListener, next_config: Arc<Config>) -> anyhow::Result<()> {
+    let (socket, address) = listener.accept().await?;
+    tokio::spawn(async move {
+        let arc_address = Arc::new(address);
+        if let Err(e) = incoming_client::accept_client(socket, Arc::clone(&arc_address), next_config).await {
+            log::error!(target: &arc_address.to_string(), "Incoming client fell into error {:?}", e);
+        }
+    });
+    Ok(())
 }
