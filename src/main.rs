@@ -5,8 +5,8 @@ use std::io::Read;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
-pub(crate) mod mc_types;
 mod incoming_client;
+pub(crate) mod mc_types;
 
 const CURRENT_PROTOCOL: (i32, &str) = (756, "1.17.1");
 
@@ -85,7 +85,10 @@ async fn setup_proxy() -> anyhow::Result<()> {
 async fn watch_incoming(listener: TcpListener, config: &Arc<Config>) {
     let config = Arc::clone(config);
     loop {
-        if watch_for_client(&listener, Arc::clone(&config)).await.is_err() {
+        if watch_for_client(&listener, Arc::clone(&config))
+            .await
+            .is_err()
+        {
             panic!("Something went wrong taking on a new client!");
         }
     }
@@ -95,7 +98,9 @@ async fn watch_for_client(listener: &TcpListener, next_config: Arc<Config>) -> a
     let (socket, address) = listener.accept().await?;
     tokio::spawn(async move {
         let arc_address = Arc::new(address);
-        if let Err(e) = incoming_client::accept_client(socket, Arc::clone(&arc_address), next_config).await {
+        if let Err(e) =
+            incoming_client::accept_client(socket, Arc::clone(&arc_address), next_config).await
+        {
             log::error!(target: &arc_address.to_string(), "Incoming client fell into error {:?}", e);
         }
     });

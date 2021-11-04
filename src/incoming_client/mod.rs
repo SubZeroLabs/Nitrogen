@@ -2,20 +2,24 @@ mod handshaking;
 mod login;
 mod status;
 
-use std::sync::Arc;
 use crate::Config;
-use tokio::net::TcpStream;
-use std::net::SocketAddr;
-use mc_packet_protocol::packet::{PacketWriter, PacketReader, PacketReadWriteLocker, WritablePacket};
-use tokio::sync::Mutex;
+use mc_packet_protocol::packet::{
+    PacketReadWriteLocker, PacketReader, PacketWriter, WritablePacket,
+};
+use mc_packet_protocol::protocol_version::MCProtocol;
+use mc_packet_protocol::registry::{
+    handshake, login as registry_login, status as registry_status, RegistryBase,
+};
 use std::fmt::{Display, Formatter};
 use std::io::Cursor;
-use mc_packet_protocol::registry::{login as registry_login, handshake, status as registry_status, RegistryBase};
-use mc_packet_protocol::protocol_version::MCProtocol;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 
 pub(crate) enum ClientState<
     R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin
+    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
 > {
     Handshaking(handshaking::ServerBoundHandshakeHandler<R, W>),
     Status(status::ServerBoundStatusHandler<R, W>),
@@ -24,9 +28,10 @@ pub(crate) enum ClientState<
 }
 
 impl<
-    R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin
-> ClientState<R, W> {
+        R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
+        W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
+    > ClientState<R, W>
+{
     pub fn peek_state(&self) -> bool {
         match self {
             ClientState::Handshaking(handler) => handler.peek_state(),
@@ -45,16 +50,22 @@ impl<
         }
     }
 
-    pub async fn handle_packet(&mut self, packet: Cursor<Vec<u8>>, protocol: MCProtocol) -> anyhow::Result<()> {
+    pub async fn handle_packet(
+        &mut self,
+        packet: Cursor<Vec<u8>>,
+        protocol: MCProtocol,
+    ) -> anyhow::Result<()> {
         match self {
             ClientState::Handshaking(handler) => {
                 handshake::server_bound::Registry::handle_packet(handler, packet, protocol).await
             }
             ClientState::Status(handler) => {
-                registry_status::server_bound::Registry::handle_packet(handler, packet, protocol).await
+                registry_status::server_bound::Registry::handle_packet(handler, packet, protocol)
+                    .await
             }
             ClientState::Login(handler) => {
-                registry_login::server_bound::Registry::handle_packet(handler, packet, protocol).await
+                registry_login::server_bound::Registry::handle_packet(handler, packet, protocol)
+                    .await
             }
             ClientState::End => Ok(()),
         }
@@ -70,9 +81,10 @@ impl<
 }
 
 impl<
-    R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin
-> Display for &ClientState<R, W> {
+        R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
+        W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
+    > Display for &ClientState<R, W>
+{
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ClientState::Handshaking(_) => f.write_str("Handshaking"),
@@ -91,7 +103,11 @@ pub struct ClientHandle {
 
 impl ClientHandle {
     pub fn new(config: Arc<Config>, address: Arc<SocketAddr>) -> Self {
-        Self { protocol_version: MCProtocol::Undefined, config, address }
+        Self {
+            protocol_version: MCProtocol::Undefined,
+            config,
+            address,
+        }
     }
 
     pub fn update_protocol(&mut self, protocol: MCProtocol) {
@@ -99,7 +115,11 @@ impl ClientHandle {
     }
 }
 
-pub async fn accept_client(client: TcpStream, address: Arc<SocketAddr>, config: Arc<Config>) -> anyhow::Result<()> {
+pub async fn accept_client(
+    client: TcpStream,
+    address: Arc<SocketAddr>,
+    config: Arc<Config>,
+) -> anyhow::Result<()> {
     log::trace!(target: &address.to_string(), "Handling new client.");
     let (read, write) = client.into_split();
 
