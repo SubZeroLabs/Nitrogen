@@ -9,6 +9,9 @@ use reqwest::StatusCode;
 use rsa::PaddingScheme;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use crate::players::PlayerList;
+use crate::config::Players;
+use std::sync::atomic::Ordering;
 
 fn hash_server_id(server_id: &str, shared_secret: &[u8], public_key: &[u8]) -> String {
     let mut hasher = sha1::Sha1::new();
@@ -43,9 +46,9 @@ pub struct ServerBoundLoginHandler<
 }
 
 impl<
-        R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-        W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
-    > ServerBoundLoginHandler<R, W>
+    R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
+    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
+> ServerBoundLoginHandler<R, W>
 {
     pub fn new(
         client_handle: Arc<Mutex<super::ClientHandle>>,
@@ -67,7 +70,7 @@ impl<
         self.next_state.is_some()
     }
 
-    async fn disconnect_client(&self, reason: String) -> anyhow::Result<()> {
+    async fn disconnect_client(&mut self, reason: String) -> anyhow::Result<()> {
         let mut disconnect = client_bound::Disconnect {
             reason: Chat::from(format!(
                 r#"{}
@@ -79,10 +82,12 @@ impl<
                 '}'
             )),
         }
-        .to_resolved_packet(self.get_protocol_version().await)?;
+            .to_resolved_packet(self.get_protocol_version().await)?;
         let mut locked_write = self.locker.lock_writer().await;
         locked_write.send_resolved_packet(&mut disconnect).await?;
         drop(locked_write);
+
+        self.next_state = Some(Box::new(super::ClientState::End));
         Ok(())
     }
 
@@ -106,13 +111,20 @@ impl<
         drop(locked_client_handle);
         protocol_version
     }
+
+    async fn get_player_list(&self) -> Arc<PlayerList> {
+        let locked_client_handle = self.client_handle.lock().await;
+        let player_list = Arc::clone(&locked_client_handle.players);
+        drop(locked_client_handle);
+        player_list
+    }
 }
 
 #[async_trait::async_trait]
 impl<
-        R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-        W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
-    > login::server_bound::RegistryHandler for ServerBoundLoginHandler<R, W>
+    R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
+    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
+> login::server_bound::RegistryHandler for ServerBoundLoginHandler<R, W>
 {
     async fn handle_default<T: MapDecodable, H: LazyHandle<T> + Send>(
         &mut self,
@@ -125,6 +137,15 @@ impl<
         &mut self,
         handle: H,
     ) -> anyhow::Result<()> {
+        let config = self.get_config().await;
+        let player_list = self.get_player_list().await;
+        match config.players {
+            Players::Strict { max_players } | Players::Constant { max_players, fail_on_over_join: true, .. }  if player_list.size.load(Ordering::SeqCst) >= max_players => {
+                return self.disconnect_client("The server is currently full.".to_string()).await;
+            }
+            _ => (),
+        }
+
         let login_start = handle.decode_type()?;
         {
             let target = &self.address_string().await;
@@ -178,7 +199,6 @@ impl<
             }
             Err(err) => {
                 self.disconnect_client(format!("{:?}", err)).await?;
-                self.next_state = Some(Box::new(super::ClientState::End));
                 return Ok(());
             }
         }
@@ -208,7 +228,6 @@ impl<
             log::debug!(target: target, "Received 204 status code for client");
             self.disconnect_client(String::from("Failed to authenticate with Mojang."))
                 .await?;
-            self.next_state = Some(Box::new(super::ClientState::End));
             return Ok(());
         } else if response.status() != StatusCode::from_u16(200)? {
             let target = &self.address_string().await;
@@ -223,8 +242,7 @@ impl<
                 response.status().as_u16(),
                 response.status().canonical_reason().unwrap_or("Unknown")
             ))
-            .await?;
-            self.next_state = Some(Box::new(super::ClientState::End));
+                .await?;
             return Ok(());
         }
 
@@ -236,7 +254,7 @@ impl<
             let mut compression_packet = client_bound::SetCompression {
                 threshold: minecraft_data_types::nums::VarInt::from(compression_threshold),
             }
-            .to_resolved_packet(self.get_protocol_version().await)?;
+                .to_resolved_packet(self.get_protocol_version().await)?;
             self.locker.send_packet(&mut compression_packet).await?;
 
             let (mut lock_read, mut lock_write) = (
@@ -252,9 +270,7 @@ impl<
         self.disconnect_client(String::from(
             "Play is not implemented yet, come back soon :)",
         ))
-        .await?;
-
-        self.next_state = Some(Box::new(super::ClientState::End));
+            .await?;
         Ok(())
     }
 }

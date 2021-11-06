@@ -16,6 +16,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
+use crate::players::PlayerList;
 
 pub(crate) enum ClientState<
     R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
@@ -28,9 +29,9 @@ pub(crate) enum ClientState<
 }
 
 impl<
-        R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-        W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
-    > ClientState<R, W>
+    R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
+    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
+> ClientState<R, W>
 {
     pub fn peek_state(&self) -> bool {
         match self {
@@ -81,9 +82,9 @@ impl<
 }
 
 impl<
-        R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-        W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
-    > Display for &ClientState<R, W>
+    R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
+    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
+> Display for &ClientState<R, W>
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -99,14 +100,16 @@ pub struct ClientHandle {
     protocol_version: MCProtocol,
     config: Arc<Config>,
     address: Arc<SocketAddr>,
+    players: Arc<PlayerList>,
 }
 
 impl ClientHandle {
-    pub fn new(config: Arc<Config>, address: Arc<SocketAddr>) -> Self {
+    pub(crate) fn new(config: Arc<Config>, address: Arc<SocketAddr>, players: Arc<PlayerList>) -> Self {
         Self {
             protocol_version: MCProtocol::Undefined,
             config,
             address,
+            players,
         }
     }
 
@@ -115,15 +118,16 @@ impl ClientHandle {
     }
 }
 
-pub async fn accept_client(
+pub(crate) async fn accept_client(
     client: TcpStream,
     address: Arc<SocketAddr>,
     config: Arc<Config>,
+    players: Arc<PlayerList>,
 ) -> anyhow::Result<()> {
     log::trace!(target: &address.to_string(), "Handling new client.");
     let (read, write) = client.into_split();
 
-    let client_handle = Arc::new(Mutex::new(ClientHandle::new(config, Arc::clone(&address))));
+    let client_handle = Arc::new(Mutex::new(ClientHandle::new(config, Arc::clone(&address), players)));
     let locker = Arc::new(PacketReadWriteLocker::new(
         Arc::new(Mutex::new(PacketWriter::new(write))),
         Arc::new(Mutex::new(PacketReader::new(read, Arc::clone(&address)))),
