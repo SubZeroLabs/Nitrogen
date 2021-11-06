@@ -6,4 +6,9 @@ compression_threshold = 256
 
 [server_info]
 motd = "Some Random MOTD which is configurable."
-max_players = 20
+
+[players]
+type = "Constant"
+players = 1337
+max_players = 210
+fail_on_over_join = true
