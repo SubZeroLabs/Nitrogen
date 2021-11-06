@@ -1,18 +1,18 @@
+use crate::config::Config;
+use crate::players::PlayerList;
 use anyhow::Context;
 use log::{error, info};
 use std::fs::File;
 use std::io::Read;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
-use crate::config::Config;
-use crate::players::PlayerList;
-use std::sync::atomic::AtomicUsize;
 
+pub(crate) mod authenticated_client;
 pub(crate) mod config;
-pub(crate) mod players;
 mod incoming_client;
 pub(crate) mod mc_types;
+pub(crate) mod players;
 
 const CURRENT_PROTOCOL: (i32, &str) = (756, "1.17.1");
 
@@ -71,7 +71,9 @@ async fn setup_proxy() -> anyhow::Result<()> {
 
 async fn watch_incoming(listener: TcpListener, config: &Arc<Config>) {
     let config = Arc::clone(config);
-    let player_list = Arc::new(PlayerList { size: Arc::new(AtomicUsize::new(0)), players: Arc::new(Mutex::new(Vec::new())) });
+    let player_list = Arc::new(PlayerList {
+        size: Arc::new(AtomicUsize::new(0)),
+    });
     loop {
         if watch_for_client(&listener, Arc::clone(&config), Arc::clone(&player_list))
             .await
@@ -82,12 +84,21 @@ async fn watch_incoming(listener: TcpListener, config: &Arc<Config>) {
     }
 }
 
-async fn watch_for_client(listener: &TcpListener, next_config: Arc<Config>, next_player_clone: Arc<PlayerList>) -> anyhow::Result<()> {
+async fn watch_for_client(
+    listener: &TcpListener,
+    next_config: Arc<Config>,
+    next_player_clone: Arc<PlayerList>,
+) -> anyhow::Result<()> {
     let (socket, address) = listener.accept().await?;
     tokio::spawn(async move {
         let arc_address = Arc::new(address);
-        if let Err(e) =
-        incoming_client::accept_client(socket, Arc::clone(&arc_address), next_config, next_player_clone).await
+        if let Err(e) = incoming_client::accept_client(
+            socket,
+            Arc::clone(&arc_address),
+            next_config,
+            next_player_clone,
+        )
+        .await
         {
             log::error!(target: &arc_address.to_string(), "Incoming client fell into error {:?}", e);
         }

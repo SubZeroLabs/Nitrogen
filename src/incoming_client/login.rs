@@ -1,5 +1,10 @@
+use crate::authenticated_client::TransferInfo;
+use crate::config::Players;
+use crate::players::PlayerList;
 use crate::Config;
-use mc_packet_protocol::packet::{PacketReadWriteLocker, WritablePacket};
+use mc_packet_protocol::packet::{
+    MovableAsyncRead, MovableAsyncWrite, PacketReadWriteLocker, WritablePacket,
+};
 use mc_packet_protocol::protocol_version::*;
 use mc_packet_protocol::registry::{login::*, *};
 use md5::Digest;
@@ -7,11 +12,10 @@ use minecraft_data_types::common::Chat;
 use num_bigint::BigInt;
 use reqwest::StatusCode;
 use rsa::PaddingScheme;
+use std::net::SocketAddr;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::players::PlayerList;
-use crate::config::Players;
-use std::sync::atomic::Ordering;
 
 fn hash_server_id(server_id: &str, shared_secret: &[u8], public_key: &[u8]) -> String {
     let mut hasher = sha1::Sha1::new();
@@ -32,24 +36,16 @@ pub struct LoginData {
     keys: Option<(rsa::RsaPrivateKey, Vec<u8>)>,
     verify: Option<Vec<u8>>,
     server_id: Option<String>,
-    game_profile: Option<crate::mc_types::GameProfile>,
 }
 
-pub struct ServerBoundLoginHandler<
-    R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
-> {
+pub struct ServerBoundLoginHandler<R: MovableAsyncRead, W: MovableAsyncWrite> {
     client_handle: Arc<Mutex<super::ClientHandle>>,
     locker: Arc<PacketReadWriteLocker<R, W>>,
     next_state: Option<Box<super::ClientState<R, W>>>,
     login_data: Box<LoginData>,
 }
 
-impl<
-    R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
-> ServerBoundLoginHandler<R, W>
-{
+impl<R: MovableAsyncRead, W: MovableAsyncWrite> ServerBoundLoginHandler<R, W> {
     pub fn new(
         client_handle: Arc<Mutex<super::ClientHandle>>,
         locker: Arc<PacketReadWriteLocker<R, W>>,
@@ -82,7 +78,7 @@ impl<
                 '}'
             )),
         }
-            .to_resolved_packet(self.get_protocol_version().await)?;
+        .to_resolved_packet(self.get_protocol_version().await)?;
         let mut locked_write = self.locker.lock_writer().await;
         locked_write.send_resolved_packet(&mut disconnect).await?;
         drop(locked_write);
@@ -96,6 +92,13 @@ impl<
         let address_str = locked_client_handle.address.to_string();
         drop(locked_client_handle);
         address_str
+    }
+
+    async fn get_address(&self) -> Arc<SocketAddr> {
+        let locked_client_handle = self.client_handle.lock().await;
+        let address = Arc::clone(&locked_client_handle.address);
+        drop(locked_client_handle);
+        address
     }
 
     async fn get_config(&self) -> Arc<Config> {
@@ -121,11 +124,13 @@ impl<
 }
 
 #[async_trait::async_trait]
-impl<
-    R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
-> login::server_bound::RegistryHandler for ServerBoundLoginHandler<R, W>
+impl<R: MovableAsyncRead, W: MovableAsyncWrite> login::server_bound::RegistryHandler
+    for ServerBoundLoginHandler<R, W>
 {
+    async fn handle_unknown(&mut self, _: std::io::Cursor<Vec<u8>>) -> anyhow::Result<()> {
+        anyhow::bail!("Unknown login packet found.");
+    }
+
     async fn handle_default<T: MapDecodable, H: LazyHandle<T> + Send>(
         &mut self,
         handle: H,
@@ -140,8 +145,15 @@ impl<
         let config = self.get_config().await;
         let player_list = self.get_player_list().await;
         match config.players {
-            Players::Strict { max_players } | Players::Constant { max_players, fail_on_over_join: true, .. }  if player_list.size.load(Ordering::SeqCst) >= max_players => {
-                return self.disconnect_client("The server is currently full.".to_string()).await;
+            Players::Strict { max_players }
+            | Players::Constant {
+                max_players,
+                fail_on_over_join: true,
+                ..
+            } if player_list.size.load(Ordering::SeqCst) >= max_players => {
+                return self
+                    .disconnect_client("The server is currently full.".to_string())
+                    .await;
             }
             _ => (),
         }
@@ -242,11 +254,11 @@ impl<
                 response.status().as_u16(),
                 response.status().canonical_reason().unwrap_or("Unknown")
             ))
-                .await?;
+            .await?;
             return Ok(());
         }
 
-        self.login_data.game_profile = Some(response.json::<crate::mc_types::GameProfile>().await?);
+        let game_profile = response.json::<crate::mc_types::GameProfile>().await?;
 
         let config = self.get_config().await;
         let compression_threshold = config.network.compression_threshold;
@@ -254,7 +266,7 @@ impl<
             let mut compression_packet = client_bound::SetCompression {
                 threshold: minecraft_data_types::nums::VarInt::from(compression_threshold),
             }
-                .to_resolved_packet(self.get_protocol_version().await)?;
+            .to_resolved_packet(self.get_protocol_version().await)?;
             self.locker.send_packet(&mut compression_packet).await?;
 
             let (mut lock_read, mut lock_write) = (
@@ -267,10 +279,13 @@ impl<
             drop(lock_write);
         }
 
-        self.disconnect_client(String::from(
-            "Play is not implemented yet, come back soon :)",
-        ))
-            .await?;
+        self.next_state = Some(Box::new(super::ClientState::Transfer(TransferInfo {
+            profile: game_profile,
+            protocol_version: self.get_protocol_version().await,
+            config: Arc::clone(&config),
+            address: self.get_address().await,
+            read_write_locker: Arc::clone(&self.locker),
+        })));
         Ok(())
     }
 }

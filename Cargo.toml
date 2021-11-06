@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 minecraft_data_types = { version = "0.1.0", git = "https://github.com/SubZeroLabs/MinecraftTypes", branch = "master" }
-mc_packet_protocol = { version = "0.1.0", git = "https://github.com/SubZeroLabs/PacketProtocol", branch = "master", features = ["initial_handle"] }
+mc_packet_protocol = { version = "0.1.0", git = "https://github.com/SubZeroLabs/PacketProtocol", branch = "master", features = ["all"] }
 anyhow = "1.0"
 toml = "0.5"
 serde = "1.0"

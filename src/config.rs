@@ -14,8 +14,14 @@ pub(crate) struct ServerInfo {
 #[serde(tag = "type")]
 pub(crate) enum Players {
     Moving,
-    Strict { max_players: usize },
-    Constant { players: usize, max_players: usize, fail_on_over_join: bool },
+    Strict {
+        max_players: usize,
+    },
+    Constant {
+        players: usize,
+        max_players: usize,
+        fail_on_over_join: bool,
+    },
 }
 
 #[derive(serde_derive::Deserialize, std::fmt::Debug)]

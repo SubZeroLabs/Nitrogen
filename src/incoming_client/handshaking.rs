@@ -1,26 +1,19 @@
 use crate::incoming_client::login::ServerBoundLoginHandler;
 use crate::incoming_client::status::ServerBoundStatusHandler;
-use mc_packet_protocol::packet::PacketReadWriteLocker;
+use mc_packet_protocol::packet::{MovableAsyncRead, MovableAsyncWrite, PacketReadWriteLocker};
 use mc_packet_protocol::protocol_version::*;
 use mc_packet_protocol::registry::handshake::server_bound::NextState;
 use mc_packet_protocol::registry::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-pub struct ServerBoundHandshakeHandler<
-    R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
-> {
+pub struct ServerBoundHandshakeHandler<R: MovableAsyncRead, W: MovableAsyncWrite> {
     client_handle: Arc<Mutex<super::ClientHandle>>,
     locker: Arc<PacketReadWriteLocker<R, W>>,
     next_state: Option<Box<super::ClientState<R, W>>>,
 }
 
-impl<
-        R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-        W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
-    > ServerBoundHandshakeHandler<R, W>
-{
+impl<R: MovableAsyncRead, W: MovableAsyncWrite> ServerBoundHandshakeHandler<R, W> {
     pub fn new(
         client_handle: Arc<Mutex<super::ClientHandle>>,
         locker: Arc<PacketReadWriteLocker<R, W>>,
@@ -42,11 +35,13 @@ impl<
 }
 
 #[async_trait::async_trait]
-impl<
-        R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-        W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
-    > handshake::server_bound::RegistryHandler for ServerBoundHandshakeHandler<R, W>
+impl<R: MovableAsyncRead, W: MovableAsyncWrite> handshake::server_bound::RegistryHandler
+    for ServerBoundHandshakeHandler<R, W>
 {
+    async fn handle_unknown(&mut self, _: std::io::Cursor<Vec<u8>>) -> anyhow::Result<()> {
+        anyhow::bail!("Unknown handshaking packet found.");
+    }
+
     async fn handle_default<T: MapDecodable, H: LazyHandle<T> + Send>(
         &mut self,
         handle: H,

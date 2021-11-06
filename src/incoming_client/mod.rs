@@ -2,9 +2,11 @@ mod handshaking;
 mod login;
 mod status;
 
+use crate::players::PlayerList;
 use crate::Config;
 use mc_packet_protocol::packet::{
-    PacketReadWriteLocker, PacketReader, PacketWriter, WritablePacket,
+    MovableAsyncRead, MovableAsyncWrite, PacketReadWriteLocker, PacketReader, PacketWriter,
+    WritablePacket,
 };
 use mc_packet_protocol::protocol_version::MCProtocol;
 use mc_packet_protocol::registry::{
@@ -16,29 +18,22 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
-use crate::players::PlayerList;
 
-pub(crate) enum ClientState<
-    R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
-> {
+pub(crate) enum ClientState<R: MovableAsyncRead, W: MovableAsyncWrite> {
     Handshaking(handshaking::ServerBoundHandshakeHandler<R, W>),
     Status(status::ServerBoundStatusHandler<R, W>),
     Login(login::ServerBoundLoginHandler<R, W>),
+    Transfer(crate::authenticated_client::TransferInfo<R, W>),
     End,
 }
 
-impl<
-    R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
-> ClientState<R, W>
-{
+impl<R: MovableAsyncRead, W: MovableAsyncWrite> ClientState<R, W> {
     pub fn peek_state(&self) -> bool {
         match self {
             ClientState::Handshaking(handler) => handler.peek_state(),
             ClientState::Status(handler) => handler.peek_state(),
             ClientState::Login(handler) => handler.peek_state(),
-            ClientState::End => false,
+            _ => unreachable!(),
         }
     }
 
@@ -47,7 +42,7 @@ impl<
             ClientState::Handshaking(handler) => handler.next_state(),
             ClientState::Status(handler) => handler.next_state(),
             ClientState::Login(handler) => handler.next_state(),
-            ClientState::End => ClientState::End,
+            _ => unreachable!(),
         }
     }
 
@@ -68,7 +63,7 @@ impl<
                 registry_login::server_bound::Registry::handle_packet(handler, packet, protocol)
                     .await
             }
-            ClientState::End => Ok(()),
+            _ => unreachable!(),
         }
     }
 
@@ -81,16 +76,13 @@ impl<
     }
 }
 
-impl<
-    R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
-> Display for &ClientState<R, W>
-{
+impl<R: MovableAsyncRead, W: MovableAsyncWrite> Display for &ClientState<R, W> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ClientState::Handshaking(_) => f.write_str("Handshaking"),
             ClientState::Status(_) => f.write_str("Status"),
             ClientState::Login(_) => f.write_str("Login"),
+            ClientState::Transfer(_) => f.write_str("Transfer"),
             ClientState::End => f.write_str("End"),
         }
     }
@@ -104,7 +96,11 @@ pub struct ClientHandle {
 }
 
 impl ClientHandle {
-    pub(crate) fn new(config: Arc<Config>, address: Arc<SocketAddr>, players: Arc<PlayerList>) -> Self {
+    pub(crate) fn new(
+        config: Arc<Config>,
+        address: Arc<SocketAddr>,
+        players: Arc<PlayerList>,
+    ) -> Self {
         Self {
             protocol_version: MCProtocol::Undefined,
             config,
@@ -127,7 +123,11 @@ pub(crate) async fn accept_client(
     log::trace!(target: &address.to_string(), "Handling new client.");
     let (read, write) = client.into_split();
 
-    let client_handle = Arc::new(Mutex::new(ClientHandle::new(config, Arc::clone(&address), players)));
+    let client_handle = Arc::new(Mutex::new(ClientHandle::new(
+        config,
+        Arc::clone(&address),
+        players,
+    )));
     let locker = Arc::new(PacketReadWriteLocker::new(
         Arc::new(Mutex::new(PacketWriter::new(write))),
         Arc::new(Mutex::new(PacketReader::new(read, Arc::clone(&address)))),
@@ -170,6 +170,9 @@ pub(crate) async fn accept_client(
                     return Ok(());
                 }
             } else if client_state.is_end() {
+                return Ok(());
+            } else if let ClientState::Transfer(transfer_info) = client_state {
+                crate::authenticated_client::transfer_client(transfer_info);
                 return Ok(());
             }
         }

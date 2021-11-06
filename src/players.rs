@@ -1,7 +1,6 @@
-use uuid::Uuid;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use uuid::Uuid;
 
 #[derive(serde_derive::Serialize, serde_derive::Deserialize)]
 pub(crate) struct Player {
@@ -10,6 +9,6 @@ pub(crate) struct Player {
 }
 
 pub(crate) struct PlayerList {
+    // todo more with this
     pub(crate) size: Arc<AtomicUsize>,
-    pub(crate) players: Arc<Mutex<Vec<Player>>>,
 }

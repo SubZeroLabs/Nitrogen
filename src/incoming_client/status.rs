@@ -1,11 +1,13 @@
+use crate::players::{Player, PlayerList};
 use crate::Config;
-use mc_packet_protocol::packet::{PacketReadWriteLocker, WritablePacket};
+use mc_packet_protocol::packet::{
+    MovableAsyncRead, MovableAsyncWrite, PacketReadWriteLocker, WritablePacket,
+};
 use mc_packet_protocol::protocol_version::*;
 use mc_packet_protocol::registry::{status::*, *};
-use std::sync::Arc;
-use tokio::sync::{Mutex, MutexGuard};
-use crate::players::{Player, PlayerList};
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(serde_derive::Serialize)]
 struct Version {
@@ -21,7 +23,7 @@ struct Players<'ser> {
 }
 
 impl<'ser> Players<'ser> {
-    async fn new(config: &Config, player_list: &'ser PlayerList, players_vec: &'ser MutexGuard<'_, Vec<Player>>) -> Players<'ser> {
+    async fn new(config: &Config, player_list: &'ser PlayerList) -> Players<'ser> {
         let (players, max_players) = match config.players {
             crate::config::Players::Moving => {
                 let len = player_list.size.load(Ordering::Relaxed);
@@ -30,14 +32,16 @@ impl<'ser> Players<'ser> {
             crate::config::Players::Strict { max_players } => {
                 (player_list.size.load(Ordering::Relaxed), max_players)
             }
-            crate::config::Players::Constant { players, max_players, .. } => {
-                (players, max_players)
-            }
+            crate::config::Players::Constant {
+                players,
+                max_players,
+                ..
+            } => (players, max_players),
         };
         Players {
             max: max_players,
             online: players,
-            sample: players_vec.iter().take(5).collect(),
+            sample: vec![],
         }
     }
 }
@@ -56,20 +60,13 @@ struct StatusJson<'ser> {
     favicon: Option<String>,
 }
 
-pub struct ServerBoundStatusHandler<
-    R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
-> {
+pub struct ServerBoundStatusHandler<R: MovableAsyncRead, W: MovableAsyncWrite> {
     client_handle: Arc<Mutex<super::ClientHandle>>,
     locker: Arc<PacketReadWriteLocker<R, W>>,
     next_state: Option<Box<super::ClientState<R, W>>>,
 }
 
-impl<
-    R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
-> ServerBoundStatusHandler<R, W>
-{
+impl<R: MovableAsyncRead, W: MovableAsyncWrite> ServerBoundStatusHandler<R, W> {
     pub fn new(
         client_handle: Arc<Mutex<super::ClientHandle>>,
         locker: Arc<PacketReadWriteLocker<R, W>>,
@@ -112,11 +109,13 @@ impl<
 }
 
 #[async_trait::async_trait]
-impl<
-    R: tokio::io::AsyncRead + Send + Sync + Sized + Unpin,
-    W: tokio::io::AsyncWrite + Send + Sync + Sized + Unpin,
-> status::server_bound::RegistryHandler for ServerBoundStatusHandler<R, W>
+impl<R: MovableAsyncRead, W: MovableAsyncWrite> status::server_bound::RegistryHandler
+    for ServerBoundStatusHandler<R, W>
 {
+    async fn handle_unknown(&mut self, _: std::io::Cursor<Vec<u8>>) -> anyhow::Result<()> {
+        anyhow::bail!("Unknown status packet found.");
+    }
+
     async fn handle_default<T: MapDecodable, H: LazyHandle<T> + Send>(
         &mut self,
         handle: H,
@@ -140,23 +139,21 @@ impl<
         };
 
         let player_list = self.get_player_list().await;
-        let player_vec_lock = player_list.players.lock().await;
         let json = serde_json::to_string(&StatusJson {
             version: Version {
                 name: crate::CURRENT_PROTOCOL.1.to_string(),
                 protocol: numbered_protocol,
             },
-            players: Players::new(&config, &player_list, &player_vec_lock).await,
+            players: Players::new(&config, &player_list).await,
             description: Description {
                 text: config.server_info.motd.clone(),
             },
             favicon: None,
         })?;
-        drop(player_vec_lock);
         let mut response = client_bound::StatusResponse {
             json_response: client_bound::JSONResponse::from(json),
         }
-            .to_resolved_packet(protocol)?;
+        .to_resolved_packet(protocol)?;
         self.locker.send_packet(&mut response).await?;
         Ok(())
     }
@@ -170,7 +167,7 @@ impl<
         let mut pong = client_bound::Pong {
             payload: ping.payload,
         }
-            .to_resolved_packet(self.get_protocol_version().await)?;
+        .to_resolved_packet(self.get_protocol_version().await)?;
 
         self.locker.send_packet(&mut pong).await?;
         self.next_state = Some(Box::new(super::ClientState::End));
