@@ -42,7 +42,7 @@ fn initiate_login(
     player_info: Arc<PlayerInfo>,
 ) -> JoinHandle<anyhow::Result<Arc<PacketReadWriteLocker<OwnedReadHalf, OwnedWriteHalf>>>> {
     tokio::task::spawn(async move {
-        let stream = TcpStream::connect(format!("{}:{}", server.ip, server.port)).await?; // todo this might be the bungeecord forwarding thing idk
+        let stream = TcpStream::connect(format!("{}:{}", server.ip, server.port)).await?;
         let (read, write) = stream.into_split();
 
         let locker = Arc::new(PacketReadWriteLocker::new(
