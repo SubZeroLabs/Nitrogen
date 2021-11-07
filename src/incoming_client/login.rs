@@ -79,10 +79,8 @@ impl<R: MovableAsyncRead, W: MovableAsyncWrite> ServerBoundLoginHandler<R, W> {
             )),
         }
         .to_resolved_packet(self.get_protocol_version().await)?;
-        let mut locked_write = self.locker.lock_writer().await;
-        locked_write.send_resolved_packet(&mut disconnect).await?;
-        drop(locked_write);
 
+        self.locker.send_packet(&mut disconnect).await?;
         self.next_state = Some(Box::new(super::ClientState::End));
         Ok(())
     }

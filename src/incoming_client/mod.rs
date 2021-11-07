@@ -16,6 +16,7 @@ use minecraft_data_types::common::Chat;
 use std::fmt::{Display, Formatter};
 use std::io::Cursor;
 use std::net::SocketAddr;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
@@ -132,9 +133,8 @@ async fn disconnect_client<R: MovableAsyncRead, W: MovableAsyncWrite>(
         )),
     }
     .to_resolved_packet(protocol)?;
-    let mut locked_write = locker.lock_writer().await;
-    locked_write.send_resolved_packet(&mut disconnect).await?;
-    drop(locked_write);
+
+    locker.send_packet(&mut disconnect).await?;
     Ok(())
 }
 
@@ -184,22 +184,23 @@ pub(crate) async fn accept_client(
             drop(locked_client_handle);
             if let MCProtocol::Illegal(_) = protocol {
                 if client_state.is_login() {
-                    let mut writer = locker.lock_writer().await;
-                    let disconnect = registry_login::client_bound::Disconnect {
+                    let mut disconnect = registry_login::client_bound::Disconnect {
                         reason: format!(r#"{}
                             "text": "Your current client version ({}) is not supported by the server.",
                             "color": "red"
                         {}"#, '{', protocol, '}').into(),
-                    };
-                    let mut resolved = disconnect.to_resolved_packet(protocol)?;
-                    writer.send_resolved_packet(&mut resolved).await?;
-                    drop(writer);
+                    }.to_resolved_packet(protocol)?;
+                    locker.send_packet(&mut disconnect).await?;
                     return Ok(());
                 }
             } else if client_state.is_end() {
                 return Ok(());
             } else if let ClientState::Transfer(transfer_info) = client_state {
-                crate::authenticated_client::transfer_client(transfer_info);
+                let client_handle = client_handle.lock().await;
+                client_handle.players.size.fetch_add(1, Ordering::SeqCst);
+                let players = Arc::clone(&client_handle.players);
+                drop(client_handle);
+                crate::authenticated_client::transfer_client(transfer_info, Arc::clone(&players));
                 return Ok(());
             }
         }

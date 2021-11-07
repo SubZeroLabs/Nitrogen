@@ -5,10 +5,16 @@ port = 25565
 compression_threshold = 256
 
 [server_info]
-motd = "Some Random MOTD which is configurable."
+motd = "Some demo MOTD"
 
 [players]
 type = "Constant"
 players = 1337
-max_players = 210
+max_players = 200
 fail_on_over_join = true
+
+[[server]]
+name = "some_server"
+ip = "127.0.0.1"
+port = 25566
+forwarding_mode = { type = "Velocity", forwarding_secret = "12345" }
