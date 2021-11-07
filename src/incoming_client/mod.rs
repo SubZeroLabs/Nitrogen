@@ -12,6 +12,7 @@ use mc_packet_protocol::protocol_version::MCProtocol;
 use mc_packet_protocol::registry::{
     handshake, login as registry_login, status as registry_status, RegistryBase,
 };
+use minecraft_data_types::common::Chat;
 use std::fmt::{Display, Formatter};
 use std::io::Cursor;
 use std::net::SocketAddr;
@@ -114,6 +115,29 @@ impl ClientHandle {
     }
 }
 
+async fn disconnect_client<R: MovableAsyncRead, W: MovableAsyncWrite>(
+    locker: Arc<PacketReadWriteLocker<R, W>>,
+    reason: String,
+    protocol: MCProtocol,
+) -> anyhow::Result<()> {
+    let mut disconnect = registry_login::client_bound::Disconnect {
+        reason: Chat::from(format!(
+            r#"{}
+                            "text": {:?},
+                            "color": "red"
+                        {}"#,
+            '{',
+            reason.replace("\"", "'"),
+            '}'
+        )),
+    }
+    .to_resolved_packet(protocol)?;
+    let mut locked_write = locker.lock_writer().await;
+    locked_write.send_resolved_packet(&mut disconnect).await?;
+    drop(locked_write);
+    Ok(())
+}
+
 pub(crate) async fn accept_client(
     client: TcpStream,
     address: Arc<SocketAddr>,
@@ -139,15 +163,18 @@ pub(crate) async fn accept_client(
     ));
 
     loop {
-        let mut locked_read = locker.lock_reader().await;
-        let next_packet = locked_read.next_packet().await?;
-        drop(locked_read);
-
         let locked_client_handle = client_handle.lock().await;
         let protocol = locked_client_handle.protocol_version;
         drop(locked_client_handle);
 
-        client_state.handle_packet(next_packet, protocol).await?;
+        if let Err(err) = next(&mut client_state, Arc::clone(&locker), protocol).await {
+            return disconnect_client(
+                Arc::clone(&locker),
+                format!("Encountered Error: {:?}", err),
+                protocol,
+            )
+            .await;
+        }
 
         if client_state.peek_state() {
             client_state = client_state.next_state();
@@ -177,4 +204,17 @@ pub(crate) async fn accept_client(
             }
         }
     }
+}
+
+async fn next<R: MovableAsyncRead, W: MovableAsyncWrite>(
+    client_state: &mut ClientState<R, W>,
+    locker: Arc<PacketReadWriteLocker<R, W>>,
+    protocol: MCProtocol,
+) -> anyhow::Result<()> {
+    let mut locked_read = locker.lock_reader().await;
+    let next_packet = locked_read.next_packet().await?;
+    drop(locked_read);
+
+    client_state.handle_packet(next_packet, protocol).await?;
+    Ok(())
 }
