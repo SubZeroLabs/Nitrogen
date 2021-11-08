@@ -10,7 +10,8 @@ use mc_packet_protocol::packet::{
 };
 use mc_packet_protocol::protocol_version::MCProtocol;
 use mc_packet_protocol::registry::{
-    handshake, login as registry_login, status as registry_status, RegistryBase,
+    handshake, login as registry_login, play as registry_play, status as registry_status,
+    RegistryBase,
 };
 use minecraft_data_types::common::Chat;
 use std::fmt::{Display, Formatter};
@@ -200,7 +201,25 @@ pub(crate) async fn accept_client(
                 client_handle.players.size.fetch_add(1, Ordering::SeqCst);
                 let players = Arc::clone(&client_handle.players);
                 drop(client_handle);
-                crate::authenticated_client::transfer_client(transfer_info, Arc::clone(&players));
+                if let Err(err) = crate::authenticated_client::transfer_client(
+                    transfer_info,
+                    Arc::clone(&players),
+                )
+                .await
+                {
+                    let mut disconnect = registry_play::client_bound::Disconnect {
+                        reason: format!(
+                            r#"{}
+                                "text": "Error ocurred while transfering to backend {:?}",
+                                "color": "red"
+                        {}"#,
+                            '{', err, '}'
+                        )
+                        .into(),
+                    }
+                    .to_resolved_packet(protocol)?;
+                    locker.send_packet(&mut disconnect).await?;
+                }
                 return Ok(());
             }
         }

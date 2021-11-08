@@ -277,6 +277,13 @@ impl<R: MovableAsyncRead, W: MovableAsyncWrite> login::server_bound::RegistryHan
             drop(lock_write);
         }
 
+        let mut login_success_packet = client_bound::LoginSuccess {
+            uuid: game_profile.id,
+            username: LoginName::from(game_profile.name.clone()),
+        }
+        .to_resolved_packet(self.get_protocol_version().await)?;
+        self.locker.send_packet(&mut login_success_packet).await?;
+
         self.next_state = Some(Box::new(super::ClientState::Transfer(TransferInfo {
             profile: game_profile,
             protocol_version: self.get_protocol_version().await,

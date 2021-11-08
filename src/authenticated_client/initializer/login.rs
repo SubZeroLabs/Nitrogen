@@ -1,6 +1,5 @@
 use crate::config::ForwardingMode;
 use crate::mc_types::GameProfile;
-use hmac::Mac;
 use mc_packet_protocol::packet::{
     MovableAsyncRead, MovableAsyncWrite, PacketReadWriteLocker, WritablePacket,
 };
@@ -127,7 +126,7 @@ impl<R: MovableAsyncRead, W: MovableAsyncWrite>
 
                 // encode info
                 VarInt::from(VELOCITY_FORWARDING_VERSION).encode(&mut data)?;
-                Address::from(self.address.to_string()).encode(&mut data)?;
+                Address::from(self.address.ip().to_string()).encode(&mut data)?;
                 self.profile.id.encode(&mut data)?;
                 LoginName::from(&*self.profile.name).encode(&mut data)?;
 
@@ -149,7 +148,7 @@ impl<R: MovableAsyncRead, W: MovableAsyncWrite>
                 }
 
                 // encode forwarding secret
-                let mac_bytes = {
+                let mut mac_bytes = {
                     use hmac::{Hmac, Mac, NewMac};
                     use sha2::Sha256;
                     // Create alias for HMAC-SHA256
@@ -159,18 +158,19 @@ impl<R: MovableAsyncRead, W: MovableAsyncWrite>
                         .expect("HMAC can take key of any size");
 
                     mac.update(&data);
-                    mac.update(b""); // todo ask Tux what the hell to do
 
                     let result = mac.finalize();
-                    result.into_bytes()
-                }; // todo idk where this even goes inside the vec
+                    result.into_bytes().to_vec()
+                };
+
+                mac_bytes.extend(data);
 
                 self.locker
                     .send_packet(
                         &mut LoginPluginResponse {
                             message_id: request.message_id,
                             successful: true,
-                            data,
+                            data: mac_bytes,
                         }
                         .to_resolved_packet(self.protocol)?,
                     )

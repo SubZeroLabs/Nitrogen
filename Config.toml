@@ -6,6 +6,7 @@ compression_threshold = 256
 
 [server_info]
 motd = "Some demo MOTD"
+priorities = ["some_server"]
 
 [players]
 type = "Constant"
@@ -17,4 +18,4 @@ fail_on_over_join = true
 name = "some_server"
 ip = "127.0.0.1"
 port = 25566
-forwarding_mode = { type = "Velocity", forwarding_secret = "12345" }
+forwarding_mode = { type = "Velocity", forwarding_secret = "secret" }

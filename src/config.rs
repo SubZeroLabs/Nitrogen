@@ -10,6 +10,7 @@ pub(crate) struct Network {
 #[derive(serde_derive::Deserialize, std::fmt::Debug)]
 pub(crate) struct ServerInfo {
     pub(crate) motd: String,
+    pub(crate) priorities: Vec<String>,
 }
 
 #[derive(serde_derive::Deserialize, std::fmt::Debug)]
@@ -47,5 +48,5 @@ pub(crate) struct Config {
     pub(crate) server_info: ServerInfo,
     pub(crate) players: Players,
     #[serde(alias = "server")]
-    pub(crate) servers: Vec<Server>,
+    pub(crate) servers: Vec<Arc<Server>>,
 }
